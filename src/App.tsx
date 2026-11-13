@@ -67,7 +67,13 @@ function App() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
 
-  // Dữ liệu thiết lập mật khẩu
+  // Trạng thái đăng nhập và bảo mật
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+
+  // Trạng thái đổi mật khẩu
+  const [showChangePassword, setShowChangePassword] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
@@ -95,8 +101,21 @@ function App() {
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      (event, session) => {
         setUserEmail(session?.user.email ?? null);
+
+        // Người dùng mở liên kết khôi phục mật khẩu
+        if (event === 'PASSWORD_RECOVERY') {
+          setShowChangePassword(true);
+          setNotice('Vui lòng nhập mật khẩu mới.');
+        }
+
+        if (event === 'SIGNED_OUT') {
+          setShowChangePassword(false);
+          setNewPassword('');
+          setConfirmPassword('');
+          setLoginPassword('');
+        }
       }
     );
 
@@ -108,7 +127,6 @@ function App() {
     if (!notice) return;
 
     const timer = window.setTimeout(() => setNotice(''), 3200);
-
     return () => window.clearTimeout(timer);
   }, [notice]);
 
@@ -218,7 +236,7 @@ function App() {
     }
   }
 
-  // THIẾT LẬP MẬT KHẨU
+  // ĐỔI MẬT KHẨU HOẶC ĐẶT LẠI MẬT KHẨU
   async function setPassword() {
     if (!supabase) {
       setNotice('Chưa kết nối Supabase.');
@@ -235,13 +253,15 @@ function App() {
       return;
     }
 
+    setAuthBusy(true);
+
     try {
       const { data: authData, error } = await supabase.auth.updateUser({
         password: newPassword
       });
 
       if (error) {
-        setNotice(`Không thể đặt mật khẩu: ${error.message}`);
+        setNotice(`Không thể cập nhật mật khẩu: ${error.message}`);
         return;
       }
 
@@ -252,54 +272,115 @@ function App() {
 
       setNewPassword('');
       setConfirmPassword('');
-      setNotice('Đã thiết lập mật khẩu thành công!');
+      setShowChangePassword(false);
+      setNotice('Đã cập nhật mật khẩu thành công!');
     } catch {
-      setNotice('Có lỗi xảy ra khi thiết lập mật khẩu.');
+      setNotice('Có lỗi xảy ra khi cập nhật mật khẩu.');
+    } finally {
+      setAuthBusy(false);
     }
   }
 
   // ĐĂNG NHẬP BẰNG MAGIC LINK
   async function signIn() {
-    if (!supabase) return;
-
-    const email = window.prompt('Nhập email của bạn:');
-    if (!email) return;
-
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: {
-        emailRedirectTo: window.location.origin
-      }
-    });
-
-    setNotice(
-      error
-        ? `Lỗi đăng nhập: ${error.message}`
-        : 'Đã gửi liên kết đăng nhập vào email. Hãy kiểm tra hộp thư.'
-    );
-  }
-
-  // ĐĂNG NHẬP BẰNG EMAIL + MẬT KHẨU
-  async function signInWithPassword() {
-    if (!supabase) return;
-
-    const email = window.prompt('Nhập email của bạn:');
-    if (!email) return;
-
-    const password = window.prompt('Nhập mật khẩu:');
-    if (!password) return;
-
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password
-    });
-
-    if (error) {
-      setNotice(`Lỗi đăng nhập: ${error.message}`);
+    if (!supabase) {
+      setNotice('Chưa kết nối Supabase.');
       return;
     }
 
-    setNotice('Đăng nhập thành công!');
+    if (!loginEmail.trim()) {
+      setNotice('Vui lòng nhập email.');
+      return;
+    }
+
+    setAuthBusy(true);
+
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: loginEmail.trim(),
+        options: {
+          emailRedirectTo: window.location.origin
+        }
+      });
+
+      setNotice(
+        error
+          ? `Lỗi đăng nhập: ${error.message}`
+          : 'Đã gửi liên kết đăng nhập vào email. Hãy kiểm tra hộp thư.'
+      );
+    } catch {
+      setNotice('Có lỗi xảy ra khi gửi Magic Link.');
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  // ĐĂNG NHẬP BẰNG EMAIL VÀ MẬT KHẨU
+  async function signInWithPassword() {
+    if (!supabase) {
+      setNotice('Chưa kết nối Supabase.');
+      return;
+    }
+
+    if (!loginEmail.trim() || !loginPassword) {
+      setNotice('Vui lòng nhập email và mật khẩu.');
+      return;
+    }
+
+    setAuthBusy(true);
+
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: loginEmail.trim(),
+        password: loginPassword
+      });
+
+      if (error) {
+        setNotice(`Đăng nhập thất bại: ${error.message}`);
+        return;
+      }
+
+      setLoginPassword('');
+      setNotice('Đăng nhập thành công!');
+    } catch {
+      setNotice('Có lỗi xảy ra khi đăng nhập.');
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  // QUÊN MẬT KHẨU
+  async function resetPassword() {
+    if (!supabase) {
+      setNotice('Chưa kết nối Supabase.');
+      return;
+    }
+
+    if (!loginEmail.trim()) {
+      setNotice('Vui lòng nhập email trước.');
+      return;
+    }
+
+    setAuthBusy(true);
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(
+        loginEmail.trim(),
+        {
+          redirectTo: window.location.origin
+        }
+      );
+
+      setNotice(
+        error
+          ? `Không thể gửi email: ${error.message}`
+          : 'Đã gửi liên kết đặt lại mật khẩu. Hãy kiểm tra email.'
+      );
+    } catch {
+      setNotice('Có lỗi xảy ra khi gửi email đặt lại mật khẩu.');
+    } finally {
+      setAuthBusy(false);
+    }
   }
 
   // ĐĂNG XUẤT
@@ -316,6 +397,8 @@ function App() {
     setUserEmail(null);
     setNewPassword('');
     setConfirmPassword('');
+    setLoginPassword('');
+    setShowChangePassword(false);
     setNotice('Đã đăng xuất Supabase.');
   }
 
@@ -772,65 +855,27 @@ function App() {
 
                   {isSupabaseConfigured ? (
                     <>
-                      <div className="account-line">
-                        {userEmail ? (
-                          <>
+                      {/* ĐÃ ĐĂNG NHẬP */}
+                      {userEmail ? (
+                        <>
+                          <div className="account-line">
                             <span className="connected-dot" />
                             Đang đăng nhập: <b>{userEmail}</b>
-                          </>
-                        ) : (
-                          <>
-                            <span className="status-dot" />
-                            Chưa đăng nhập
-                          </>
-                        )}
-                      </div>
+                          </div>
 
-                      {/* THIẾT LẬP MẬT KHẨU */}
-                      {userEmail && (
-                        <div
-                          className="form-stack"
-                          style={{ marginTop: 16 }}
-                        >
-                          <h4>Thiết lập mật khẩu</h4>
+                          <div className="settings-actions">
+                            <button
+                              className="secondary-btn"
+                              onClick={() => {
+                                setShowChangePassword(!showChangePassword);
+                                setNewPassword('');
+                                setConfirmPassword('');
+                              }}
+                            >
+                              <Pencil size={16} />
+                              {showChangePassword ? 'Hủy đổi mật khẩu' : 'Đổi mật khẩu'}
+                            </button>
 
-                          <label className="field-label">
-                            Mật khẩu mới
-                            <input
-                              type="password"
-                              value={newPassword}
-                              onChange={e => setNewPassword(e.target.value)}
-                              placeholder="Ít nhất 8 ký tự"
-                              autoComplete="new-password"
-                              minLength={8}
-                            />
-                          </label>
-
-                          <label className="field-label">
-                            Xác nhận mật khẩu
-                            <input
-                              type="password"
-                              value={confirmPassword}
-                              onChange={e => setConfirmPassword(e.target.value)}
-                              placeholder="Nhập lại mật khẩu"
-                              autoComplete="new-password"
-                            />
-                          </label>
-
-                          <button
-                            className="primary-btn"
-                            onClick={setPassword}
-                            disabled={!newPassword || !confirmPassword}
-                          >
-                            Thiết lập mật khẩu
-                          </button>
-                        </div>
-                      )}
-
-                      {/* CÁC NÚT ĐĂNG NHẬP VÀ ĐỒNG BỘ */}
-                      <div className="settings-actions">
-                        {userEmail ? (
-                          <>
                             <button
                               className="secondary-btn"
                               onClick={syncCloud}
@@ -849,25 +894,122 @@ function App() {
                             >
                               <LogOut size={16} /> Đăng xuất
                             </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              className="secondary-btn"
-                              onClick={signIn}
-                            >
-                              <LogIn size={16} /> Đăng nhập bằng Magic Link
-                            </button>
+                          </div>
+
+                          {/* FORM ĐỔI MẬT KHẨU */}
+                          {showChangePassword && (
+                            <div className="form-stack" style={{ marginTop: 16 }}>
+                              <h4>Đổi mật khẩu</h4>
+
+                              <label className="field-label">
+                                Mật khẩu mới
+                                <input
+                                  type="password"
+                                  value={newPassword}
+                                  onChange={e => setNewPassword(e.target.value)}
+                                  placeholder="Ít nhất 8 ký tự"
+                                  autoComplete="new-password"
+                                  minLength={8}
+                                />
+                              </label>
+
+                              <label className="field-label">
+                                Xác nhận mật khẩu mới
+                                <input
+                                  type="password"
+                                  value={confirmPassword}
+                                  onChange={e => setConfirmPassword(e.target.value)}
+                                  placeholder="Nhập lại mật khẩu mới"
+                                  autoComplete="new-password"
+                                />
+                              </label>
+
+                              <button
+                                className="primary-btn"
+                                onClick={setPassword}
+                                disabled={
+                                  authBusy ||
+                                  !newPassword ||
+                                  !confirmPassword
+                                }
+                              >
+                                {authBusy ? 'Đang cập nhật...' : 'Lưu mật khẩu mới'}
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        /* CHƯA ĐĂNG NHẬP */
+                        <>
+                          <div className="account-line">
+                            <span className="status-dot" />
+                            Chưa đăng nhập
+                          </div>
+
+                          <div className="form-stack" style={{ marginTop: 16 }}>
+                            <h4>Đăng nhập tài khoản</h4>
+
+                            <label className="field-label">
+                              Email
+                              <input
+                                type="email"
+                                value={loginEmail}
+                                onChange={e => setLoginEmail(e.target.value)}
+                                placeholder="Nhập email của bạn"
+                                autoComplete="email"
+                                required
+                              />
+                            </label>
+
+                            <label className="field-label">
+                              Mật khẩu
+                              <input
+                                type="password"
+                                value={loginPassword}
+                                onChange={e => setLoginPassword(e.target.value)}
+                                placeholder="Nhập mật khẩu"
+                                autoComplete="current-password"
+                                required
+                              />
+                            </label>
 
                             <button
                               className="primary-btn"
                               onClick={signInWithPassword}
+                              disabled={
+                                authBusy ||
+                                !loginEmail.trim() ||
+                                !loginPassword
+                              }
                             >
-                              <LogIn size={16} /> Đăng nhập bằng mật khẩu
+                              <LogIn size={16} />
+                              {authBusy ? 'Đang đăng nhập...' : 'Đăng nhập'}
                             </button>
-                          </>
-                        )}
-                      </div>
+
+                            <button
+                              type="button"
+                              className="text-btn"
+                              onClick={resetPassword}
+                              disabled={authBusy || !loginEmail.trim()}
+                            >
+                              Quên mật khẩu?
+                            </button>
+
+                            <div className="fine-print">
+                              Hoặc đăng nhập bằng liên kết gửi đến email.
+                            </div>
+
+                            <button
+                              className="secondary-btn"
+                              onClick={signIn}
+                              disabled={authBusy || !loginEmail.trim()}
+                            >
+                              <LogIn size={16} />
+                              Đăng nhập bằng Magic Link
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </>
                   ) : (
                     <div className="setup-hint">
